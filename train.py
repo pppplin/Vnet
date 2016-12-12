@@ -10,7 +10,7 @@ import os
 import image_processor
 import answer_generator
 
-def build_batch(batch_num, batch_size, img_feature, img_id_map, qa_data, vocab_data, split, embedd_size):
+def build_batch(batch_num, batch_size, img_feature, img_id_map, qa_data, vocab_data, split, embedd_size, dropout_rate):
     qa = qa_data[split]
     batch_start = (batch_num * batch_size) % len(qa)
     batch_end = min(len(qa), batch_start + batch_size)
@@ -36,7 +36,10 @@ def build_batch(batch_num, batch_size, img_feature, img_id_map, qa_data, vocab_d
         img_encoded = tf.nn.conv2d_transpose(img, deconv_filter,\
                                              output_shape=output_shape, \
                                             strides=[1,4,4,1])
-
+        drop_img_encoded = tf.nn.dropout(img_encoded, 1 - dropout_rate)
+        img_encoded = tf.relu(drop_img_encoded)
+        
+    img_encoded = tf.reshape(img_encoded, [output_shape[0], -1, embedd_size])
     return sentence, answer, img_encoded
 
 def main():
@@ -51,7 +54,7 @@ def main():
     parser.add_argument('--init_bound', type=float, default=0.5, help='Parameter Initialization Distribution Bound')
 
     parser.add_argument('--hidden_dim', type=int, default=1024, help='RNN Hidden State Dimension')
-    parser.add_argument('--rnn_size', type=int, default=512, help='Size of RNN Cell(C and h), question embedding size')
+    parser.add_argument('--rnn_size', type=int, default=512, help='Size of RNN Cell(C and h), question embedding size')#change to embed size!!!!!!!!
     parser.add_argument('--rnn_layer', type=int, default=2, help='Number of RNN Layers')
     parser.add_argument('--que_embed_size', type=int, default=200, help='Question Embedding Dimension')
 
@@ -59,6 +62,9 @@ def main():
     parser.add_argument('--lr_decay', type=float, default=1.0, help='Learning Rate Decay Factor')
     parser.add_argument('--num_epoch', type=int, default=200, help='Number of Training Epochs')
     parser.add_argument('--grad_norm', type=int, default=5, help='Maximum Norm of the Gradient')
+    
+    parser.add_argument('--img_feature_size', type=int, default=196, help='14*14, wide*height img feature after deconv')
+    parser.add_argument('--attention_round', type=int, default=2, help='number of attention round')
     args = parser.parse_args()
 
     if not os.path.isdir(args.log_dir):
@@ -90,7 +96,9 @@ def main():
         'dropout_rate': args.dropout_rate,
         'data_dir': args.data_dir,
         'top_num': args.top_num,
-        'init_bound': args.init_bound
+        'init_bound': args.init_bound,
+        'img_feature_size': args.img_feature_size,
+        'attention_round': args.attention_round
         })
 
     lr = args.learning_rate
@@ -112,7 +120,8 @@ def main():
         dev_acc_list = []
         while train_batch_num * args.batch_size < len(qa_data['train']):
             que_batch, ans_batch, img_batch = build_batch(train_batch_num, args.batch_size, \
-                                                train_img_feature, img_id_map, qa_data, vocab_data, 'train', args.rnn_size)
+                                                train_img_feature, img_id_map, qa_data, vocab_data, 'train', args.rnn_size,\
+                                                         args.dropout_rate)
             _, loss_value, acc, pred = sess.run([train_op, loss, accuracy, predict],
                                                     feed_dict={
                                                         feed_img: img_batch,
@@ -129,7 +138,8 @@ def main():
                 train_summary_writer.add_summary(train_loss_summary)
         while dev_batch_num * args.batch_size < len(qa_data['dev']):
             que_batch, ans_batch, img_batch = build_batch(dev_batch_num, args.batch_size, \
-                                                train_img_feature, img_id_map, qa_data, vocab_data, 'train', args.rnn_size)
+                                                train_img_feature, img_id_map, qa_data, vocab_data, 'train', args.rnn_size,\
+                                                         args.dropout_rate)
             loss_value, acc, pred = sess.run([loss, accuracy, predict],
                                                     feed_dict={
                                                         feed_img: img_batch,
