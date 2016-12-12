@@ -10,7 +10,7 @@ import os
 import image_processor
 import answer_generator
 
-def build_batch(batch_num, batch_size, img_feature, img_id_map, qa_data, vocab_data, split):
+def build_batch(batch_num, batch_size, img_feature, img_id_map, qa_data, vocab_data, split, embedd_size):
     qa = qa_data[split]
     batch_start = (batch_num * batch_size) % len(qa)
     batch_end = min(len(qa), batch_start + batch_size)
@@ -26,7 +26,18 @@ def build_batch(batch_num, batch_size, img_feature, img_id_map, qa_data, vocab_d
         img_index = img_id_map[qa[i]['image_id']]
         img[counter, :] = img_feature[img_index][:]
         counter += 1
-    return sentence, answer, img
+
+    #reshape img
+    img = img.reshape((img.shape[0], 64, 64, 1))
+    with tf.variable_scope("deconv"):
+        img = tf.convert_to_tensor(img, dtype=tf.float32)
+        deconv_filter = tf.Variable(tf.random_uniform([9,9,embedd_size,1]), name='deconv_filter', dtype=tf.float32)
+        output_shape = [int(img.get_shape()[0]),14, 14, int(embedd_size)]
+        img_encoded = tf.nn.conv2d_transpose(img, deconv_filter,\
+                                             output_shape=output_shape, \
+                                            strides=[1,4,4,1])
+
+    return sentence, answer, img_encoded
 
 def main():
     parser = argparse.ArgumentParser()
@@ -56,8 +67,8 @@ def main():
 
     print 'Reading Question Answer Data'
     qa_data, vocab_data = data_loader.load_qa_data(args.data_dir, args.top_num)
+    #(N, 4096) np array
     train_img_feature, train_img_id_list = image_processor.VGG_16_extract('train', args)
-
     print 'Building Image ID Map and Answer Map'
     img_id_map = {}
     for i in xrange(len(train_img_id_list)):
@@ -101,7 +112,7 @@ def main():
         dev_acc_list = []
         while train_batch_num * args.batch_size < len(qa_data['train']):
             que_batch, ans_batch, img_batch = build_batch(train_batch_num, args.batch_size, \
-                                                train_img_feature, img_id_map, qa_data, vocab_data, 'train')
+                                                train_img_feature, img_id_map, qa_data, vocab_data, 'train', args.rnn_size)
             _, loss_value, acc, pred = sess.run([train_op, loss, accuracy, predict],
                                                     feed_dict={
                                                         feed_img: img_batch,
@@ -118,7 +129,7 @@ def main():
                 train_summary_writer.add_summary(train_loss_summary)
         while dev_batch_num * args.batch_size < len(qa_data['dev']):
             que_batch, ans_batch, img_batch = build_batch(dev_batch_num, args.batch_size, \
-                                                train_img_feature, img_id_map, qa_data, vocab_data, 'train')
+                                                train_img_feature, img_id_map, qa_data, vocab_data, 'train', args.rnn_size)
             loss_value, acc, pred = sess.run([loss, accuracy, predict],
                                                     feed_dict={
                                                         feed_img: img_batch,
