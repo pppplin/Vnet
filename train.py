@@ -1,3 +1,6 @@
+from gpu import define_gpu
+define_gpu(2)
+
 import tensorflow as tf
 import numpy as np
 import data_loader
@@ -6,9 +9,6 @@ import os
 
 import image_processor
 import answer_generator
-from gpu import define_gpu
-define_gpu(2)
-#testing again...
 
 def build_batch(batch_num, batch_size, img_feature, img_id_map, qa_data, vocab_data, split):
     qa = qa_data[split]
