@@ -40,7 +40,7 @@ def main():
     parser.add_argument('--init_bound', type=float, default=0.5, help='Parameter Initialization Distribution Bound')
 
     parser.add_argument('--hidden_dim', type=int, default=1024, help='RNN Hidden State Dimension')
-    parser.add_argument('--rnn_size', type=int, default=512, help='Size of RNN Cell')
+    parser.add_argument('--rnn_size', type=int, default=512, help='Size of RNN Cell(C and h), question embedding size')
     parser.add_argument('--rnn_layer', type=int, default=2, help='Number of RNN Layers')
     parser.add_argument('--que_embed_size', type=int, default=200, help='Question Embedding Dimension')
 
@@ -63,7 +63,7 @@ def main():
     for i in xrange(len(train_img_id_list)):
         img_id_map[train_img_id_list[i]] = i
     ans_map = {vocab_data['ans_vocab'][ans] : ans for ans in vocab_data['ans_vocab']}
-
+    
     print 'Building Answer Generator Model'
     generator = answer_generator.Answer_Generator({
         'batch_size': args.batch_size,
@@ -72,8 +72,8 @@ def main():
         'rnn_size': args.rnn_size,
         'rnn_layer': args.rnn_layer,
         'que_embed_size': args.que_embed_size,
-        'que_vocab_size': len(vocab_data['que_vocab']),
-        'ans_vocab_size': len(vocab_data['ans_vocab']),
+        'que_vocab_size': len(vocab_data['que_vocab']), #15182
+        'ans_vocab_size': len(vocab_data['ans_vocab']), #1000
         'max_que_length': vocab_data['max_que_length'],
         'num_output': args.num_output,
         'dropout_rate': args.dropout_rate,
