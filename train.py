@@ -5,6 +5,9 @@ import argparse
 
 import image_processor
 import answer_generator
+from gpu import define_gpu
+import time, os
+define_gpu(2)
 
 def right_align(seq, length):
     mask = np.zeros(np.shape(seq))
@@ -33,7 +36,7 @@ def main():
     parser.add_argument('--lr_decay', type=float, default=0.99, help='Learning Rate Decay Factor')
     parser.add_argument('--num_iteration', type=int, default=15000, help='Number of Training Iterations')
     parser.add_argument('--num_epoch', type=int, default=300, help='Number of Training Epochs')
-    parser.add_argument('--grad_norm', type=int, default=5, 'Maximum Norm of the Gradient')
+    parser.add_argument('--grad_norm', type=int, default=5, help= 'Maximum Norm of the Gradient')
     args = parser.parse_args()
 
 
