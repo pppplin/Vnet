@@ -8,6 +8,7 @@ import answer_generator
 from gpu import define_gpu
 import time, os
 define_gpu(2)
+#testing
 
 def right_align(seq, length):
     mask = np.zeros(np.shape(seq))
