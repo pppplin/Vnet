@@ -11,11 +11,11 @@ def load_qa_data(data_dir, top_num):
     questions = None
     answers = None
     assert os.path.isdir(os.path.join(data_dir, 'train'))
-    assert os.path.isdir(os.path.join(data_dir, 'dev'))
+    assert os.path.isdir(os.path.join(data_dir, 'val'))
     train_que_json_path = os.path.join(data_dir,'train', 'MultipleChoice_mscoco_train2014_questions.json')
     train_ans_json_path = os.path.join(data_dir,'train', 'mscoco_train2014_annotations.json')
-    dev_que_json_path = os.path.join(data_dir,'dev', 'MultipleChoice_mscoco_val2014_questions.json')
-    dev_ans_json_path = os.path.join(data_dir,'dev', 'mscoco_val2014_annotations.json')
+    val_que_json_path = os.path.join(data_dir,'val', 'MultipleChoice_mscoco_val2014_questions.json')
+    val_ans_json_path = os.path.join(data_dir,'val', 'mscoco_val2014_annotations.json')
     data_file_path = os.path.join(data_dir, 'data_file.pkl')
     vocab_file_path = os.path.join(data_dir, 'vocab_file.pkl')
 
@@ -38,16 +38,16 @@ def load_qa_data(data_dir, top_num):
     with open(train_ans_json_path) as f:
         train_ans = json.load(f)
 
-    print "Loading Validation Questions: %s" % dev_que_json_path
-    with open(dev_que_json_path) as f:
-        dev_que = json.load(f)
+    print "Loading Validation Questions: %s" % val_que_json_path
+    with open(val_que_json_path) as f:
+        val_que = json.load(f)
 
-    print "Loading Validation Answers: %s" % dev_ans_json_path
-    with open(dev_ans_json_path) as f:
-        dev_ans = json.load(f)
+    print "Loading Validation Answers: %s" % val_ans_json_path
+    with open(val_ans_json_path) as f:
+        val_ans = json.load(f)
 
-    questions = train_que['questions'] + dev_que['questions']
-    answers = train_ans['annotations'] + dev_ans['annotations']
+    questions = train_que['questions'] + val_que['questions']
+    answers = train_ans['annotations'] + val_ans['annotations']
 
     ans_vocab = build_ans_vocab(answers, top_num)
     que_vocab, max_que_length = build_que_vocab(questions, answers, ans_vocab)
@@ -71,12 +71,12 @@ def load_qa_data(data_dir, top_num):
     print 'Training Data Extracted: ', len(training_data)
 
     # Write Validation Question Data
-    dev_data = []
-    for i, question in enumerate(dev_que['questions']):
-        ans = dev_ans['annotations'][i]['multiple_choice_answer']
+    val_data = []
+    for i, question in enumerate(val_que['questions']):
+        ans = val_ans['annotations'][i]['multiple_choice_answer']
         if ans in ans_vocab:
-            dev_data.append({
-                'image_id': dev_ans['annotations'][i]['image_id'],
+            val_data.append({
+                'image_id': val_ans['annotations'][i]['image_id'],
                 'question': np.zeros(max_que_length),
                 'answer': ans_vocab[ans]
             })
@@ -84,13 +84,13 @@ def load_qa_data(data_dir, top_num):
 
             padding_num = max_que_length - len(que_words)
             for j in range(len(que_words)):
-                dev_data[-1]['question'][padding_num + j] = que_vocab[que_words[j]]
-    print 'Validation Data Extracted: ', len(dev_data)
+                val_data[-1]['question'][padding_num + j] = que_vocab[que_words[j]]
+    print 'Validation Data Extracted: ', len(val_data)
 
     print 'Saving Data'
     qa_data = {
         'train': training_data,
-        'dev': dev_data
+        'val': val_data
     }
     with open(data_file_path, 'wb') as f:
         pickle.dump(qa_data, f)

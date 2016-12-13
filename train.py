@@ -28,23 +28,27 @@ def build_batch(batch_num, batch_size, img_feature, img_id_map, qa_data, vocab_d
         counter += 1
 
     #reshape img
-    img = img.reshape((img.shape[0], 64, 64, 1))
-    with tf.variable_scope("deconv"):
-        img = tf.convert_to_tensor(img, dtype=tf.float32)
-        deconv_filter = tf.Variable(tf.random_uniform([9,9,embedd_size,1]), name='deconv_filter', dtype=tf.float32)
-        output_shape = [int(img.get_shape()[0]),14, 14, int(embedd_size)]
-        img_encoded = tf.nn.conv2d_transpose(img, deconv_filter,\
-                                             output_shape=output_shape, \
-                                            strides=[1,4,4,1])
-        drop_img_encoded = tf.nn.dropout(img_encoded, 1 - dropout_rate)
-        img_encoded = tf.relu(drop_img_encoded)
+#     img = img.reshape((img.shape[0], 64, 64, 1))
+#     with tf.variable_scope("deconv"):
+#         img = tf.convert_to_tensor(img, dtype=tf.float32)
+#         bs = int(img.get_shape()[0])
+#         deconv_filter = tf.Variable(tf.random_uniform([9,9,1,512]), name='deconv_filter', dtype=tf.float32)
+#         img_encoded = tf.nn.conv2d(img, deconv_filter, [1,4,4,1],padding = 'VALID', name='deocnv')
+#         drop_img_encoded = tf.nn.dropout(img_encoded, 1 - dropout_rate)
+#         img_encoded = tf.nn.relu(drop_img_encoded)
         
-    img_encoded = tf.reshape(img_encoded, [output_shape[0], -1, embedd_size])
-    return sentence, answer, img_encoded
+#     init_op = tf.initialize_all_variables()
+#     local_sess = tf.Session()
+#     local_sess.run(init_op)
+#     local_sess.run(img_encoded)
+#     img = img_encoded.eval(session = local_sess)
+#     local_sess.close()
+#     img = np.reshape(img, [bs, -1, embedd_size])
+    return sentence, answer, img
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', type=str, default='/home/zs/NLP/Vnet/data', help='Data Directory')
+    parser.add_argument('--data_dir', type=str, default='/home/zs/NLP/Vnet/data/', help='Data Directory')
     parser.add_argument('--log_dir', type=str, default='log', help='Checkpoint File Directory')
     parser.add_argument('--top_num', type=int, default=1000, help='Top Number Answer')
 
@@ -67,7 +71,8 @@ def main():
     parser.add_argument('--img_feature_size', type=int, default=196, help='14*14, wide*height img feature after deconv')
     parser.add_argument('--attention_round', type=int, default=2, help='number of attention round')
     parser.add_argument('--attention_hidden_dim', type=int, default=16, help='k in paper, attention hidden dim')
-    parser.add_argument('--use_attention', type=bool, default=False, help='whether to use attention model')
+    #MUST BE TRUE: preprocess only fit attention model
+    parser.add_argument('--use_attention', type=bool, default=True, help='whether to use attention model')
     args = parser.parse_args()
 
     if not os.path.isdir(args.log_dir):
@@ -92,8 +97,8 @@ def main():
         'rnn_size': args.rnn_size,
         'rnn_layer': args.rnn_layer,
         'que_embed_size': args.que_embed_size,
-        'que_vocab_size': len(vocab_data['que_vocab']), #15182
-        'ans_vocab_size': len(vocab_data['ans_vocab']), #1000
+        'que_vocab_size': len(vocab_data['que_vocab']),
+        'ans_vocab_size': len(vocab_data['ans_vocab']),
         'max_que_length': vocab_data['max_que_length'],
         'num_output': args.num_output,
         'dropout_rate': args.dropout_rate,
@@ -102,8 +107,7 @@ def main():
         'init_bound': args.init_bound,
         'img_feature_size': args.img_feature_size,
         'attention_round': args.attention_round,
-        'bs': args.batch_size,
-        'attention_hidden_dim' = args.attention_hidden_dim
+        'attention_hidden_dim': args.attention_hidden_dim
         })
 
     lr = args.learning_rate
@@ -118,19 +122,33 @@ def main():
     tf.initialize_all_variables().run(session=sess)
 
     train_summary_writer = tf.train.SummaryWriter(os.path.join(args.log_dir, "summaries", "train"), sess.graph)
-    dev_summary_writer = tf.train.SummaryWriter(os.path.join(args.log_dir, "summaries", "dev"), sess.graph)
+    val_summary_writer = tf.train.SummaryWriter(os.path.join(args.log_dir, "summaries", "val"), sess.graph)
 
     print 'Training Start...'
     saver = tf.train.Saver()
     for epoch in range(args.num_epoch):
         print 'Epoch %d #############' % epoch
         train_batch_num = 0
-        dev_batch_num = 0
-        dev_acc_list = []
+        val_batch_num = 0
+        val_acc_list = []
         while train_batch_num * args.batch_size < len(qa_data['train']):
             que_batch, ans_batch, img_batch = build_batch(train_batch_num, args.batch_size, \
                                                 train_img_feature, img_id_map, qa_data, vocab_data, 'train', args.rnn_size,\
                                                          args.dropout_rate)
+            img_batch = img_batch.reshape((img_batch.shape[0], 64, 64, 1))
+            with tf.variable_scope("deconv"):
+            
+                img_batch = tf.convert_to_tensor(img_batch, dtype=tf.float32)
+                bs = int(img_batch.get_shape()[0])
+                deconv_filter = tf.Variable(tf.random_uniform([9,9,1,512]), name='deconv_filter', dtype=tf.float32)
+                img_encoded = tf.nn.conv2d(img_batch, deconv_filter, [1,4,4,1],padding = 'VALID', name='deocnv')
+                drop_img_encoded = tf.nn.dropout(img_encoded, 1 - args.dropout_rate)
+                img_encoded = tf.nn.relu(drop_img_encoded)
+                
+            sess.run(tf.initialize_all_variables())
+            img_batch = img_encoded.eval(session=sess)
+            img_batch = np.reshape(img_batch, [bs, -1, args.rnn_size])
+            
             _, loss_value, acc, pred = sess.run([train_op, loss, accuracy, predict],
                                                     feed_dict={
                                                         feed_img: img_batch,
@@ -145,8 +163,9 @@ def main():
                 cost.tag = "train_loss"
                 cost.simple_value = float(loss_value)
                 train_summary_writer.add_summary(train_loss_summary)
-        while dev_batch_num * args.batch_size < len(qa_data['dev']):
-            que_batch, ans_batch, img_batch = build_batch(dev_batch_num, args.batch_size, \
+                
+        while val_batch_num * args.batch_size < len(qa_data['val']):
+            que_batch, ans_batch, img_batch = build_batch(val_batch_num, args.batch_size, \
                                                 train_img_feature, img_id_map, qa_data, vocab_data, 'train', args.rnn_size,\
                                                          args.dropout_rate)
             loss_value, acc, pred = sess.run([loss, accuracy, predict],
@@ -155,19 +174,19 @@ def main():
                                                         feed_que: que_batch,
                                                         feed_label: ans_batch
                                                     })
-            dev_batch_num += 1
-            dev_acc_list.append(float(acc))
-            dev_loss_summary = tf.Summary()
-            cost = dev_loss_summary.value.add()
-            cost.tag = "dev_loss"
+            val_batch_num += 1
+            val_acc_list.append(float(acc))
+            val_loss_summary = tf.Summary()
+            cost = val_loss_summary.value.add()
+            cost.tag = "val_loss"
             cost.simple_value = float(loss_value)
-            dev_summary_writer.add_summary(dev_loss_summary)
-        print 'Epoch: ', epoch, ' Accuracy: ', max(dev_acc_list)
-        dev_acc_summary = tf.Summary()
-        dev_acc = dev_acc_summary.value.add()
-        dev_acc.tag = "dev_accuracy"
-        dev_acc.simple_value = float(acc)
-        dev_summary_writer.add_summary(dev_acc_summary)
+            val_summary_writer.add_summary(val_loss_summary)
+        print 'Epoch: ', epoch, ' Accuracy: ', max(val_acc_list)
+        val_acc_summary = tf.Summary()
+        val_acc = val_acc_summary.value.add()
+        val_acc.tag = "val_accuracy"
+        val_acc.simple_value = float(acc)
+        val_summary_writer.add_summary(val_acc_summary)
         saving = saver.save(sess, os.path.join(args.log_dir, 'model%d.ckpt' % i))
         lr = lr * args.lr_decay
 

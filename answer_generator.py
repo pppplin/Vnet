@@ -18,7 +18,6 @@ class Answer_Generator():
         self.max_que_length = params['max_que_length']
         self.img_feature_size = params['img_feature_size']
         self.attention_round = params['attention_round']
-        self.bs = params['bs']
         self.attention_hidden_dim = params['attention_hidden_dim']
         self.img_processor = image_processor.Vgg16()
         self.que_processor = text_processor.Deeper_LSTM({
@@ -43,8 +42,7 @@ class Answer_Generator():
         self.score_W = tf.Variable(tf.random_uniform([self.hidden_dim, self.num_output], \
                                                      -self.init_bound, self.init_bound),
                                    name='score_W')
-        self.score_b = tf.Variable(
-            tf.random_uniform([self.num_output], -self.init_bound, self.init_bound, name='score_b'))
+        self.score_b = tf.Variable(tf.random_uniform([self.num_output], -self.init_bound, self.init_bound, name='score_b'))
 
         self.score_b_h = tf.Variable(
             tf.random_uniform([self.hidden_dim], -self.init_bound, self.init_bound, name='score_b'))
@@ -65,7 +63,7 @@ class Answer_Generator():
 
         que_state, sentence_batch = self.que_processor.train()
         drop_que_state = tf.nn.dropout(que_state, 1 - self.dropout_rate)
-        drop_que_state = tf.reshape(drop_que_state, [real_size, 2 * self.rnn_layer * self.rnn_size])
+        drop_que_state = tf.reshape(drop_que_state, [self.batch_size, 2 * self.rnn_layer * self.rnn_size])
         linear_que_state = tf.nn.xw_plus_b(drop_que_state, self.que_W, self.que_b)
         que_feature = tf.tanh(linear_que_state)
 
@@ -90,22 +88,23 @@ class Answer_Generator():
     def train_attention_model(self):
         V0 = tf.placeholder('float32', [None, self.img_feature_size, self.rnn_size], name='img_state')
         label_batch = tf.placeholder('float32', [None, self.ans_vocab_size], name='label_batch')
-        real_size = tf.shape(img_state)[0]
+        real_size = tf.to_int32(tf.shape(V0)[0])
         Q0, sentence_batch = self.que_processor.train()
 
         with tf.variable_scope("attention"):
-            v, q, V, Q, C_update = attention(V0, Q0)
+            v, q, V, Q, C_update = self.attention(V0, Q0)
             C = C_update  # first time no C_old, C is C_update
             for i in range(self.attention_round):
                 tf.get_variable_scope().reuse_variables()
-                v, q, V, Q, C_update = attention(V, Q, C)  # update v,q, V,Q
-                C = memory_cell(v, q, C_update=C_update, C_old=C)  # update C
-            v, q, _, _, _ = attention(V, Q, C)  # get v,q
+                v, q, V, Q, C_update = self.attention(V, Q, C)  # update v,q, V,Q
+                C = self.memory_cell(v, q, C_update=C_update, C_old=C)  # update C
+            v, q, _, _, _ = self.attention(V, Q, C)  # get v,q
         # (bs, d) v and q
         v = tf.expand_dims(v, 1)
         q = tf.expand_dims(q, 1)
-        score_W_uv_batch = tf.pack([self.score_W_uv] * real_size)
-        score_W_uq_batch = tf.pack([self.score_W_uq] * real_size)
+
+        score_W_uv_batch = tf.pack([self.score_W_uv] * self.batch_size)
+        score_W_uq_batch = tf.pack([self.score_W_uq] * self.batch_size)
         score = tf.tanh(
             tf.squeeze(tf.batch_matmul(v, score_W_uv_batch) + tf.batch_matmul(q, score_W_uq_batch)) + self.score_b_h)
         logits = tf.nn.xw_plus_b(score, self.score_W, self.score_b)
@@ -118,22 +117,22 @@ class Answer_Generator():
         accuracy = tf.reduce_mean(tf.cast(correct_predict, tf.float32))
         loss = tf.reduce_sum(cross_entropy, name='loss')
 
-        return loss, accuracy, predict, img_state, sentence_batch, label_batch
+        return loss, accuracy, predict, V0, sentence_batch, label_batch
 
     def memory_cell(self, v, q, C_update=None, C_old=None):
         # if no C_old return C_update directly
         #clean
         v = tf.expand_dims(v, 2)
         q = tf.expand_dims(q, 2)
-        real_size = v.get_shape()[0]
+        # real_size = v.get_shape()[0]
         W_uv = tf.Variable(tf.random_uniform([1, self.rnn_size], -self.init_bound, \
                                              self.init_bound, name='W_uv'))
-        W_uv_batch = tf.pack([W_uv] * real_size)
+        W_uv_batch = tf.pack([W_uv] * self.batch_size)
         W_uq = tf.Variable(tf.random_uniform([1, self.rnn_size], -self.init_bound, \
                                              self.init_bound, name='W_uq'))
-        W_uq_batch = tf.pack([W_uq] * real_size)
+        W_uq_batch = tf.pack([W_uq] * self.batch_size)
         b_u = tf.Variable(tf.random_uniform([1], -self.init_bound, \
-                                            self.init_bound, name='b_u'))
+                                            self.init_bound), name='b_u')
         #(bs,1)
         u = tf.sigmoid(tf.batch_matmul(W_uv_batch, v) + tf.batch_matmul(W_uq_batch, q) + b_u)
         C = tf.mul(C_old, 1 - u) + tf.mul(C_update, u)
@@ -143,11 +142,10 @@ class Answer_Generator():
         # clean
         # accept and update C
         #C is the affinity map
-        bs = V.get_shape()[0]
         W_c = tf.Variable(tf.random_uniform([self.rnn_size, self.rnn_size], -self.init_bound, \
                                             self.init_bound, name='W_c'))
         # Q = tf.transpose(Q, perm=[0, 2, 1])
-        W_c_batch = tf.pack([W_c] * bs, axis=0)
+        W_c_batch = tf.pack([W_c] * self.batch_size)
         #compute C
         if C == None:
             Q = tf.transpose(Q, perm=[0, 2, 1])
@@ -157,21 +155,23 @@ class Answer_Generator():
             Q = tf.transpose(Q, perm=[0, 2, 1])
             #NO dropout
             #(d,k)
-        W_hv = tf.Variable(tf.random_uniform([self.rnn_size, self.attention_hidden_dim]), -self.init_bound, \
-                           self.init_bound, name='W_hv')
-        #(N,k)
-        b_hv = tf.Variable(tf.random_uniform([self.img_feature_size, self.attention_hidden_dim]), -self.init_bound, \
-                           self.init_bound, name='b_hv')
-        #(d,k)
-        W_hq = tf.Variable(tf.random_uniform([self.rnn_size, self.attention_hidden_dim]), -self.init_bound, \
-                           self.init_bound, name='W_hq')
-        #(T,k)
-        b_hq = tf.Variable(tf.random_uniform([self.max_que_length, self.attention_hidden_dim]), -self.init_bound, \
-                           self.init_bound, name='b_hq')
 
-        W_hv_batch = tf.pack([W_hv] * bs)
+
+        W_hv = tf.Variable(tf.random_uniform([self.rnn_size, self.attention_hidden_dim], \
+                                             -self.init_bound,self.init_bound), name='W_hv')
+        #(N,k)
+        b_hv = tf.Variable(tf.random_uniform([self.img_feature_size, self.attention_hidden_dim], -self.init_bound, \
+                                             self.init_bound), name='b_hv')
+        #(d,k)
+        W_hq = tf.Variable(tf.random_uniform([self.rnn_size, self.attention_hidden_dim], -self.init_bound, \
+                                             self.init_bound), name='W_hq')
+        #(T,k)
+        b_hq = tf.Variable(tf.random_uniform([self.max_que_length, self.attention_hidden_dim], -self.init_bound, \
+                                             self.init_bound), name='b_hq')
+
+        W_hv_batch = tf.pack([W_hv] * self.batch_size)
         # (bs, d,k)
-        W_hq_batch = tf.pack([W_hq] * bs)
+        W_hq_batch = tf.pack([W_hq] * self.batch_size)
         #(bs, N, k(attention_hidden_dim))
         H_v = tf.tanh(tf.batch_matmul(V, W_hv_batch) + tf.batch_matmul(tf.batch_matmul(C, Q), W_hq_batch) + b_hv)
         #(bs, T, k(attention_hidden_dim))
@@ -179,20 +179,20 @@ class Answer_Generator():
             tf.batch_matmul(Q, W_hq_batch) + tf.batch_matmul(tf.batch_matmul(tf.transpose(C, perm=[0, 2, 1]), V), \
                                                              W_hv_batch) + b_hq)
 
-        W_av = tf.Variable(tf.random_uniform([self.attention_hidden_dim, 1]), -self.init_bound, \
-                           self.init_bound, name='W_av')
-        W_aq = tf.Variable(tf.random_uniform([self.attention_hidden_dim, 1]), -self.init_bound, \
-                           self.init_bound, name='W_aq')
+        W_av = tf.Variable(tf.random_uniform([self.attention_hidden_dim, 1], -self.init_bound, \
+                                             self.init_bound), name='W_av')
+        W_aq = tf.Variable(tf.random_uniform([self.attention_hidden_dim, 1], -self.init_bound, \
+                                             self.init_bound), name='W_aq')
         #(N,1)
-        b_av = tf.Variable(tf.random_uniform([self.img_feature_size, 1]), -self.init_bound, \
-                           self.init_bound, name='b_av')
+        b_av = tf.Variable(tf.random_uniform([self.img_feature_size, 1], -self.init_bound, \
+                                             self.init_bound), name='b_av')
         #(T,1)
-        b_aq = tf.Variable(tf.random_uniform([self.max_que_length, 1]), -self.init_bound, \
-                           self.init_bound, name='b_aq')
+        b_aq = tf.Variable(tf.random_uniform([self.max_que_length, 1], -self.init_bound, \
+                                             self.init_bound), name='b_aq')
         #(bs,N,1)
-        a_v = tf.sigmoid(tf.batch_matmul(H_v, tf.pack([W_av] * bs)) + b_av)
+        a_v = tf.sigmoid(tf.batch_matmul(H_v, tf.pack([W_av] * self.batch_size)) + b_av)
         #(bs,T,1)
-        a_q = tf.sigmoid(tf.batch_matmul(H_q, tf.pack([W_aq] * bs)) + b_aq)
+        a_q = tf.sigmoid(tf.batch_matmul(H_q, tf.pack([W_aq] * self.batch_size)) + b_aq)
 
         V = tf.mul(V, a_v)  #(bs, N, d)
         Q = tf.mul(Q, a_q)  #(bs, T, d)
