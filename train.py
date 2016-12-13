@@ -54,7 +54,8 @@ def main():
     parser.add_argument('--init_bound', type=float, default=0.5, help='Parameter Initialization Distribution Bound')
 
     parser.add_argument('--hidden_dim', type=int, default=1024, help='RNN Hidden State Dimension')
-    parser.add_argument('--rnn_size', type=int, default=512, help='Size of RNN Cell(C and h), question embedding size')#change to embed size!!!!!!!!
+    #TODO: change to embed size!!!!!!!!
+    parser.add_argument('--rnn_size', type=int, default=512, help='Size of RNN Cell(C and h), question embedding size')
     parser.add_argument('--rnn_layer', type=int, default=2, help='Number of RNN Layers')
     parser.add_argument('--que_embed_size', type=int, default=200, help='Question Embedding Dimension')
 
@@ -66,6 +67,7 @@ def main():
     parser.add_argument('--img_feature_size', type=int, default=196, help='14*14, wide*height img feature after deconv')
     parser.add_argument('--attention_round', type=int, default=2, help='number of attention round')
     parser.add_argument('--attention_hidden_dim', type=int, default=16, help='k in paper, attention hidden dim')
+    parser.add_argument('--use_attention', type=bool, default=False, help='whether to use attention model')
     args = parser.parse_args()
 
     if not os.path.isdir(args.log_dir):
@@ -105,7 +107,11 @@ def main():
         })
 
     lr = args.learning_rate
-    loss, accuracy, predict, feed_img, feed_que, feed_label = generator.train_model()
+    if args.use_attention:
+        loss, accuracy, predict, feed_img, feed_que, feed_label = generator.train_attention_model()
+    else:
+        loss, accuracy, predict, feed_img, feed_que, feed_label = generator.train_model()
+
     train_op = tf.train.AdamOptimizer(lr).minimize(loss)
     sess = tf.Session()
 
