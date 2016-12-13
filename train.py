@@ -65,6 +65,7 @@ def main():
     
     parser.add_argument('--img_feature_size', type=int, default=196, help='14*14, wide*height img feature after deconv')
     parser.add_argument('--attention_round', type=int, default=2, help='number of attention round')
+    parser.add_argument('--attention_hidden_dim', type=int, default=16, help='k in paper, attention hidden dim')
     args = parser.parse_args()
 
     if not os.path.isdir(args.log_dir):
@@ -98,7 +99,9 @@ def main():
         'top_num': args.top_num,
         'init_bound': args.init_bound,
         'img_feature_size': args.img_feature_size,
-        'attention_round': args.attention_round
+        'attention_round': args.attention_round,
+        'bs': args.batch_size,
+        'attention_hidden_dim' = args.attention_hidden_dim
         })
 
     lr = args.learning_rate
