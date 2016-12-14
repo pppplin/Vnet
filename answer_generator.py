@@ -42,6 +42,7 @@ class Answer_Generator():
         self.score_W = tf.Variable(tf.random_uniform([self.hidden_dim, self.num_output], \
                                                      -self.init_bound, self.init_bound),
                                    name='score_W')
+        
         self.score_b = tf.Variable(tf.random_uniform([self.num_output], -self.init_bound, self.init_bound, name='score_b'))
 
         self.score_b_h = tf.Variable(
@@ -92,37 +93,34 @@ class Answer_Generator():
         # (32, 22, 512)
         # (32, 22)
         Q0, sentence_batch = self.que_processor.train()
-        # with tf.variable_scope("attention"):
-        #     v, q, V, Q, C_update = self.attention(V0, Q0)
-#             C = C_update  # first time no C_old, C is C_update
-#             #NAN IN MEMORY CELL!!!NTH ABOUT THE ATTENTION ROUND and reuse OR self.attention WITH C AS INOUT(NO)!
-#             for i in range(self.attention_round):
-#                 tf.get_variable_scope().reuse_variables()
-#                 v, q, V, Q, C_update = self.attention(V, Q, C)  # update v,q, V,Q
-#                 C = self.memory_cell(v, q, C_update=C_update, C_old=C)  # update C
-                # tf.Print(C,[C])
-# #                 C is NAN???
-#             v, q, _, _, _ = self.attention(V, Q, C)# get v,q
-        # (bs, d) v and q
-        #JUST FOR TEST
-        v, q, _, _, _ = self.attention(V0, Q0)
-        
+   
+        with tf.variable_scope("attention"):
+            v, q, V, Q, C_update = self.attention(V0, Q0)
+            C_old = None
+            for i in range(self.attention_round):#self.attention_round=0 then get the model in paper
+                tf.get_variable_scope().reuse_variables()
+                C_old = self.memory_cell(v, q, C_update=C_update, C_old=C_old)
+                v, q, V, Q, C_update = self.attention(V0, Q0, C=C_old)
+                
         score = tf.tanh(tf.matmul(v, self.score_W_uv) + tf.matmul(q, self.score_W_uq) + self.score_b_h)
         logits = tf.nn.xw_plus_b(score, self.score_W, self.score_b)
-
+        
         cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits, label_batch, name='entropy')
-        tf.check_numerics(cross_entropy, 'cross_entropy givesn NaN')
+        
         ans_probability = tf.nn.softmax(logits, name='answer_prob')
         predict = tf.argmax(ans_probability, 1)
         correct_predict = tf.equal(tf.argmax(ans_probability, 1), tf.argmax(label_batch, 1))
         accuracy = tf.reduce_mean(tf.cast(correct_predict, tf.float32))
         loss = tf.reduce_sum(cross_entropy, name='loss')
-
+        
         return loss, accuracy, predict, V0, sentence_batch, label_batch
 
     def memory_cell(self, v, q, C_update=None, C_old=None):
-        # rewrittened
+        #rewrittened
         #clean
+        if C_old=None:
+            return C_update
+        
         W_uv = tf.Variable(tf.random_uniform([self.rnn_size,1], -self.init_bound, \
                                              self.init_bound, name='W_uv'))
         W_uq = tf.Variable(tf.random_uniform([self.rnn_size,1], -self.init_bound, \
@@ -140,8 +138,10 @@ class Answer_Generator():
         #C is the affinity map
         W_c = tf.Variable(tf.random_uniform([self.rnn_size, self.rnn_size], -self.init_bound, \
                                             self.init_bound, name='W_c'))
+        update = True
         #compute C
         if C == None:
+            update= False
             # (N, T)
             C = tf.einsum('aik,ajk->ij', tf.einsum('ijk,lk->ijl',V,W_c), Q)
             
@@ -189,9 +189,8 @@ class Answer_Generator():
         # V = tf.mul(V, v)#(bs, N, d)
         # Q = tf.mul(V, q)#(bs, N, d)
 
-        #Update C??????????
-        # (bs, N, T)
-        # C = tf.batch_matmul(tf.batch_matmul(V, W_c_batch), Q)
-        #and return C, transform Q back
+        #Update C
+        if update:
+            C = tf.einsum('aik,ajk->ij', tf.einsum('ijk,lk->ijl',V,W_c), Q)
 
         return (v, q, V_new, Q_new, C)
