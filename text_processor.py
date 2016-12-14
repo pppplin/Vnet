@@ -44,7 +44,6 @@ class Deeper_LSTM:
             #     que_embedding = tf.tanh(drop_embedding)
         # output, state = self.stacked_cell(que_embedding, state)
         # return state, sentence_batch
-            
         linear_embedding = tf.nn.embedding_lookup(self.que_embed_W, sentence_batch)
         drop_embedding = tf.nn.dropout(linear_embedding, 1 - self.dropout_rate)
         que_embedding = tf.tanh(drop_embedding)

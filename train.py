@@ -10,40 +10,27 @@ import os
 import image_processor
 import answer_generator
 
-def build_batch(batch_num, batch_size, img_feature, img_id_map, qa_data, vocab_data, split, embedd_size, dropout_rate):
+def build_batch(batch_num, batch_size, img_feature, img_id_map, qa_data, vocab_data, split, embedd_size):
     qa = qa_data[split]
     batch_start = (batch_num * batch_size) % len(qa)
     batch_end = min(len(qa), batch_start + batch_size)
     size = batch_end - batch_start
     sentence = np.ndarray((size, vocab_data['max_que_length']), dtype='int32')
     answer = np.zeros((size, len(vocab_data['ans_vocab'])))
-    img = np.ndarray((size, 4096))
+    img = np.ndarray((size, 7,7, embedd_size))
 
     counter = 0
     for i in range(batch_start, batch_end):
         sentence[counter, :] = qa[i]['question'][:]
         answer[counter, qa[i]['answer']] = 1.0
         img_index = img_id_map[qa[i]['image_id']]
-        img[counter, :] = img_feature[img_index][:]
+        # img[counter, :] = img_feature[img_index][:]
+        #just for test:
+        if img_index<64:
+            img[counter, :] = img_feature[img_index][:]
         counter += 1
-
-    #reshape img
-#     img = img.reshape((img.shape[0], 64, 64, 1))
-#     with tf.variable_scope("deconv"):
-#         img = tf.convert_to_tensor(img, dtype=tf.float32)
-#         bs = int(img.get_shape()[0])
-#         deconv_filter = tf.Variable(tf.random_uniform([9,9,1,512]), name='deconv_filter', dtype=tf.float32)
-#         img_encoded = tf.nn.conv2d(img, deconv_filter, [1,4,4,1],padding = 'VALID', name='deocnv')
-#         drop_img_encoded = tf.nn.dropout(img_encoded, 1 - dropout_rate)
-#         img_encoded = tf.nn.relu(drop_img_encoded)
-        
-#     init_op = tf.initialize_all_variables()
-#     local_sess = tf.Session()
-#     local_sess.run(init_op)
-#     local_sess.run(img_encoded)
-#     img = img_encoded.eval(session = local_sess)
-#     local_sess.close()
-#     img = np.reshape(img, [bs, -1, embedd_size])
+    #
+    img = np.reshape(img, (img.shape[0], -1, img.shape[-1]))
     return sentence, answer, img
 
 def main():
@@ -52,27 +39,29 @@ def main():
     parser.add_argument('--log_dir', type=str, default='log', help='Checkpoint File Directory')
     parser.add_argument('--top_num', type=int, default=1000, help='Top Number Answer')
 
-    parser.add_argument('--batch_size', type=int, default=64, help='Image Training Batch Size')
+    parser.add_argument('--batch_size', type=int, default=32, help='Image Training Batch Size,64')
     parser.add_argument('--num_output', type=int, default=1000, help='Number of Output')
     parser.add_argument('--dropout_rate', type=float, default=0.5, help='Dropout Rate')
-    parser.add_argument('--init_bound', type=float, default=0.5, help='Parameter Initialization Distribution Bound')
+    parser.add_argument('--init_bound', type=float, default=1.0, help='Parameter Initialization Distribution Bound, 0.5')
 
-    parser.add_argument('--hidden_dim', type=int, default=1024, help='RNN Hidden State Dimension')
+    parser.add_argument('--hidden_dim', type=int, default=128, help='RNN Hidden State Dimension, 1024')
     #TODO: change to embed size!!!!!!!!
-    parser.add_argument('--rnn_size', type=int, default=512, help='Size of RNN Cell(C and h), question embedding size')
-    parser.add_argument('--rnn_layer', type=int, default=2, help='Number of RNN Layers')
-    parser.add_argument('--que_embed_size', type=int, default=200, help='Question Embedding Dimension')
+    parser.add_argument('--rnn_size', type=int, default=512, help='Size of RNN Cell(C and h), question embedding size,512')
+    parser.add_argument('--rnn_layer', type=int, default=1, help='Number of RNN Layers,2')
+    parser.add_argument('--que_embed_size', type=int, default=20, help='Question Embedding Dimension, 200')
 
-    parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning Rate')
+    parser.add_argument('--learning_rate', type=float, default=0, help='Learning Rate, 1e-4')
     parser.add_argument('--lr_decay', type=float, default=1.0, help='Learning Rate Decay Factor')
     parser.add_argument('--num_epoch', type=int, default=200, help='Number of Training Epochs')
     parser.add_argument('--grad_norm', type=int, default=5, help='Maximum Norm of the Gradient')
     
-    parser.add_argument('--img_feature_size', type=int, default=196, help='14*14, wide*height img feature after deconv')
+    parser.add_argument('--img_feature_size', type=int, default=49, help='7*7, wide*height img feature after deconv')
     parser.add_argument('--attention_round', type=int, default=2, help='number of attention round')
     parser.add_argument('--attention_hidden_dim', type=int, default=16, help='k in paper, attention hidden dim')
     #MUST BE TRUE: preprocess only fit attention model
     parser.add_argument('--use_attention', type=bool, default=True, help='whether to use attention model')
+    
+    parser.add_argument('--my_img_data_dir', type=str, default='/home/weilin/VQA/Vnet/data/', help='Data Directory')
     args = parser.parse_args()
 
     if not os.path.isdir(args.log_dir):
@@ -133,22 +122,7 @@ def main():
         val_acc_list = []
         while train_batch_num * args.batch_size < len(qa_data['train']):
             que_batch, ans_batch, img_batch = build_batch(train_batch_num, args.batch_size, \
-                                                train_img_feature, img_id_map, qa_data, vocab_data, 'train', args.rnn_size,\
-                                                         args.dropout_rate)
-            img_batch = img_batch.reshape((img_batch.shape[0], 64, 64, 1))
-            with tf.variable_scope("deconv"):
-            
-                img_batch = tf.convert_to_tensor(img_batch, dtype=tf.float32)
-                bs = int(img_batch.get_shape()[0])
-                deconv_filter = tf.Variable(tf.random_uniform([9,9,1,512]), name='deconv_filter', dtype=tf.float32)
-                img_encoded = tf.nn.conv2d(img_batch, deconv_filter, [1,4,4,1],padding = 'VALID', name='deocnv')
-                drop_img_encoded = tf.nn.dropout(img_encoded, 1 - args.dropout_rate)
-                img_encoded = tf.nn.relu(drop_img_encoded)
-                
-            sess.run(tf.initialize_all_variables())
-            img_batch = img_encoded.eval(session=sess)
-            img_batch = np.reshape(img_batch, [bs, -1, args.rnn_size])
-            
+                                                train_img_feature, img_id_map, qa_data, vocab_data, 'train', args.rnn_size)
             _, loss_value, acc, pred = sess.run([train_op, loss, accuracy, predict],
                                                     feed_dict={
                                                         feed_img: img_batch,
@@ -166,8 +140,7 @@ def main():
                 
         while val_batch_num * args.batch_size < len(qa_data['val']):
             que_batch, ans_batch, img_batch = build_batch(val_batch_num, args.batch_size, \
-                                                train_img_feature, img_id_map, qa_data, vocab_data, 'train', args.rnn_size,\
-                                                         args.dropout_rate)
+                                                train_img_feature, img_id_map, qa_data, vocab_data, 'train', args.rnn_size)#really train???
             loss_value, acc, pred = sess.run([loss, accuracy, predict],
                                                     feed_dict={
                                                         feed_img: img_batch,
