@@ -39,8 +39,8 @@ def VGG_16_extract(split, args):
         vgg = Vgg16()
         vgg.build(img_batch)
         
-        # while idx < num_img: debugging
-        while idx <50:
+        # while idx < 50: debugging
+        while idx <num_img:
             start = time.clock()
             batch = np.ndarray((args.batch_size, 224, 224, 3))
 

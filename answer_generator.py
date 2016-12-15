@@ -97,19 +97,14 @@ class Answer_Generator():
             v, q, V, Q, C_update = self.attention(V0, Q0)
             C_old = None
             for i in range(self.attention_round):
-                print('REACHED')
                 #self.attention_round=0 to get the model in paper
                 # print(tf.all_variables())
                 tf.get_variable_scope().reuse_variables()#NOT SURE?
                 C_old = self.memory_cell(v, q, C_update=C_update, C_old=C_old)
                 v, q, V, Q, C_update = self.attention(V0, Q0, C=C_old)
                 
-        # print(tf.get_collection(tf.GraphKeys.VARIABLES, scope='attention'))
         
         score = tf.tanh(tf.matmul(v, self.score_W_uv) + tf.matmul(q, self.score_W_uq) + self.score_b_h)
-        # score = layers.batch_norm(score)
-        # print(type(tf.get_default_session().run(score)))
-    
         logits = tf.nn.xw_plus_b(score, self.score_W, self.score_b)
         logits = layers.batch_norm(logits)
         cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits, label_batch, name='entropy')
