@@ -2,7 +2,7 @@ import tensorflow as tf
 
 import image_processor
 import text_processor
-
+from tensorflow.contrib import layers
 
 class Answer_Generator():
     def __init__(self, params):
@@ -46,7 +46,7 @@ class Answer_Generator():
         self.score_b = tf.Variable(tf.random_uniform([self.num_output], -self.init_bound, self.init_bound, name='score_b'))
 
         self.score_b_h = tf.Variable(
-            tf.random_uniform([self.hidden_dim], -self.init_bound, self.init_bound, name='score_b'))
+            tf.random_uniform([self.hidden_dim], -self.init_bound, self.init_bound, name='score_bh'))
 
         self.score_W_uv = tf.Variable(
             tf.random_uniform([self.rnn_size, self.hidden_dim], -self.init_bound, self.init_bound, \
@@ -75,7 +75,6 @@ class Answer_Generator():
         score = tf.mul(que_feature, img_feature)
         drop_score = tf.nn.dropout(score, 1 - self.dropout_rate)
         logits = tf.nn.xw_plus_b(drop_score, self.score_W, self.score_b)
-
         cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits, label_batch, name='entropy')
         ans_probability = tf.nn.softmax(logits, name='answer_prob')
 
@@ -83,7 +82,7 @@ class Answer_Generator():
         correct_predict = tf.equal(tf.argmax(ans_probability, 1), tf.argmax(label_batch, 1))
         accuracy = tf.reduce_mean(tf.cast(correct_predict, tf.float32))
         loss = tf.reduce_sum(cross_entropy, name='loss')
-
+        #for test
         return loss, accuracy, predict, img_state, sentence_batch, label_batch
 
     def train_attention_model(self):
@@ -97,14 +96,22 @@ class Answer_Generator():
         with tf.variable_scope("attention"):
             v, q, V, Q, C_update = self.attention(V0, Q0)
             C_old = None
-            for i in range(self.attention_round):#self.attention_round=0 then get the model in paper
-                tf.get_variable_scope().reuse_variables()
+            for i in range(self.attention_round):
+                print('REACHED')
+                #self.attention_round=0 to get the model in paper
+                # print(tf.all_variables())
+                tf.get_variable_scope().reuse_variables()#NOT SURE?
                 C_old = self.memory_cell(v, q, C_update=C_update, C_old=C_old)
                 v, q, V, Q, C_update = self.attention(V0, Q0, C=C_old)
                 
-        score = tf.tanh(tf.matmul(v, self.score_W_uv) + tf.matmul(q, self.score_W_uq) + self.score_b_h)
-        logits = tf.nn.xw_plus_b(score, self.score_W, self.score_b)
+        # print(tf.get_collection(tf.GraphKeys.VARIABLES, scope='attention'))
         
+        score = tf.tanh(tf.matmul(v, self.score_W_uv) + tf.matmul(q, self.score_W_uq) + self.score_b_h)
+        # score = layers.batch_norm(score)
+        # print(type(tf.get_default_session().run(score)))
+    
+        logits = tf.nn.xw_plus_b(score, self.score_W, self.score_b)
+        logits = layers.batch_norm(logits)
         cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits, label_batch, name='entropy')
         
         ans_probability = tf.nn.softmax(logits, name='answer_prob')
@@ -112,13 +119,12 @@ class Answer_Generator():
         correct_predict = tf.equal(tf.argmax(ans_probability, 1), tf.argmax(label_batch, 1))
         accuracy = tf.reduce_mean(tf.cast(correct_predict, tf.float32))
         loss = tf.reduce_sum(cross_entropy, name='loss')
-        
         return loss, accuracy, predict, V0, sentence_batch, label_batch
 
     def memory_cell(self, v, q, C_update=None, C_old=None):
         #rewrittened
         #clean
-        if C_old=None:
+        if C_old==None:
             return C_update
         
         W_uv = tf.Variable(tf.random_uniform([self.rnn_size,1], -self.init_bound, \
@@ -143,6 +149,9 @@ class Answer_Generator():
         if C == None:
             update= False
             # (N, T)
+            #alter 
+            # C = tf.batch_matmul(tf.einsum('ijk,lk->ijl',V,W_c), Q, adj_y=True)
+            # C = tf.reduce_sum(C,0)
             C = tf.einsum('aik,ajk->ij', tf.einsum('ijk,lk->ijl',V,W_c), Q)
             
         #(k,d)
@@ -192,5 +201,6 @@ class Answer_Generator():
         #Update C
         if update:
             C = tf.einsum('aik,ajk->ij', tf.einsum('ijk,lk->ijl',V,W_c), Q)
-
+            # C = tf.batch_matmul(tf.einsum('ijk,lk->ijl',V,W_c), Q, adj_y=True)
+            # C = tf.reduce_sum(C,0)
         return (v, q, V_new, Q_new, C)
