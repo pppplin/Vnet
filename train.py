@@ -18,19 +18,14 @@ def build_batch(batch_num, batch_size, img_feature, img_id_map, qa_data, vocab_d
     sentence = np.ndarray((size, vocab_data['max_que_length']), dtype='int32')
     answer = np.zeros((size, len(vocab_data['ans_vocab'])))
     img = np.ndarray((size, 7,7, embedd_size))
-
+    # img = np.ndarray((size, 4096))
     counter = 0
     for i in range(batch_start, batch_end):
         sentence[counter, :] = qa[i]['question'][:]
         answer[counter, qa[i]['answer']] = 1.0
         img_index = img_id_map[qa[i]['image_id']]
-        # img[counter, :] = img_feature[img_index][:]
-        #just for test:
-        if img_index<64:
-            img[counter, :] = img_feature[img_index][:]
+        img[counter, :] = img_feature[img_index][:]
         counter += 1
-    #
-    img = np.reshape(img, (img.shape[0], -1, img.shape[-1]))
     return sentence, answer, img
 
 def main():
@@ -50,13 +45,13 @@ def main():
     parser.add_argument('--rnn_layer', type=int, default=1, help='Number of RNN Layers,2')
     parser.add_argument('--que_embed_size', type=int, default=20, help='Question Embedding Dimension, 200')
 
-    parser.add_argument('--learning_rate', type=float, default=1, help='Learning Rate, 1e-4')
+    parser.add_argument('--learning_rate', type=float, default=1e-2, help='Learning Rate, 1e-4')
     parser.add_argument('--lr_decay', type=float, default=1.0, help='Learning Rate Decay Factor')
     parser.add_argument('--num_epoch', type=int, default=200, help='Number of Training Epochs')
     parser.add_argument('--grad_norm', type=int, default=5, help='Maximum Norm of the Gradient')
     
     parser.add_argument('--img_feature_size', type=int, default=49, help='7*7, wide*height img feature after deconv')
-    parser.add_argument('--attention_round', type=int, default=3, help='number of attention round')
+    parser.add_argument('--attention_round', type=int, default=0, help='number of attention round')
     parser.add_argument('--attention_hidden_dim', type=int, default=16, help='k in paper, attention hidden dim')
     #MUST BE TRUE: preprocess only fit attention model
     parser.add_argument('--use_attention', type=bool, default=True, help='whether to use attention model')
@@ -70,10 +65,12 @@ def main():
 
     print 'Reading Question Answer Data'
     qa_data, vocab_data = data_loader.load_qa_data(args.data_dir, args.top_num)
-    #(N, 4096) np array
+
     train_img_feature, train_img_id_list = image_processor.VGG_16_extract('train', args)
+    print(train_img_feature.shape)
     print 'Building Image ID Map and Answer Map'
     img_id_map = {}
+    
     for i in xrange(len(train_img_id_list)):
         img_id_map[train_img_id_list[i]] = i
     ans_map = {vocab_data['ans_vocab'][ans] : ans for ans in vocab_data['ans_vocab']}
@@ -102,6 +99,7 @@ def main():
     lr = args.learning_rate
     if args.use_attention:
         loss, accuracy, predict, feed_img, feed_que, feed_label= generator.train_attention_model()        
+        # loss, accuracy, predict, feed_img, feed_que, feed_label, feed_V0= generator.train_attention_model()        
     else:
         loss, accuracy, predict, feed_img, feed_que, feed_label = generator.train_model()
 
@@ -123,8 +121,6 @@ def main():
         while train_batch_num * args.batch_size < len(qa_data['train']):
             que_batch, ans_batch, img_batch = build_batch(train_batch_num, args.batch_size, \
                                                 train_img_feature, img_id_map, qa_data, vocab_data, 'train', args.rnn_size)
-
-        
             
             _, loss_value, acc, pred = sess.run([train_op, loss, accuracy, predict],
                                                     feed_dict={
@@ -133,14 +129,32 @@ def main():
                                                         feed_label: ans_batch
                                                     })
 
+            print(img_batch)
+            
+            # _, loss_value, acc, pred , feed_V0= sess.run([train_op, loss, accuracy, predict, feed_V0],
+            #                             feed_dict={
+            #                                 feed_img: img_batch,
+            #                                 feed_que: que_batch,
+            #                                 feed_label: ans_batch
+            #                             })
+            # print("img_batch")
+            # print(img_batch)
+            # print(" ")
+            # print("feed_V0")
+            # print(feed_V0.shape)
+            # print(feed_V0)
+
             train_batch_num += 1
-            if train_batch_num % 1 == 0:
+            if train_batch_num % 100 == 0:
                 print "Batch: ", train_batch_num, " Loss: ", loss_value, " Learning Rate: ", lr
                 train_loss_summary = tf.Summary()
                 cost = train_loss_summary.value.add()
                 cost.tag = "train_loss"
                 cost.simple_value = float(loss_value)
                 train_summary_writer.add_summary(train_loss_summary)
+            # for test
+            # if train_batch_num>100:
+            #     assert False
                 
         while val_batch_num * args.batch_size < len(qa_data['val']):
             que_batch, ans_batch, img_batch = build_batch(val_batch_num, args.batch_size, \
