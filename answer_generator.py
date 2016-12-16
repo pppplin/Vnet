@@ -57,7 +57,7 @@ class Answer_Generator():
 
 
     def train_model(self):
-        # TODO: DOESN'T WORK NOW: changed preprocess
+        # The baseline.(didn't change, not using) 
         img_state = tf.placeholder('float32', [None, self.img_dim], name='img_state')
         label_batch = tf.placeholder('float32', [None, self.ans_vocab_size], name='label_batch')
         real_size = tf.shape(img_state)[0]
@@ -86,24 +86,46 @@ class Answer_Generator():
         return loss, accuracy, predict, img_state, sentence_batch, label_batch
 
     def train_attention_model(self):
+        #ALWAYS USING THIS ONE
+        
+        #v/V for image, q/Q for question
+        #KEY COMPONENTS: v, q, V, Q, C
+        #v, q is the attentioned visual/question vector.
+        #C is the affinity map in the paper
+        #V, Q is the attentioned vector before reduce sum. feed as input for next attention procedure.
         V0 = tf.placeholder('float32', [None, self.img_feature_size, self.rnn_size], name='img_state')
+        # # feed_V0 = layers.batch_norm(V0)
+        feed_V0 = tf.tanh(V0)
+        drop_V0 = tf.nn.dropout(V0, 1 - self.dropout_rate)#nan and inf...
+        norm_V0 = layers.batch_norm(drop_V0)
+        feed_V0 = tf.tanh(norm_V0)#NAN
+        
+        # reshape from fc
+        # V0 = tf.placeholder('float32', [None, 4096], name='img_state')
+        # reshape_img = tf.reshape(V0, [self.batch_size, 16, 16, 16])
+        # W_f = tf.Variable(tf.random_normal([3, 3, 16, 124]))
+        # rescale_img = tf.nn.conv2d(reshape_img, W_f, strides = [1, 1, 1, 1], padding="VALID")
+        # img_want = tf.nn.max_pool(rescale_img, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1],
+        #                   padding='VALID')
+        # drop_img_state = tf.nn.dropout(img_want, 1 - self.dropout_rate)
+        # feed_V0 = tf.tanh(drop_img_state)
+        # feed_V0 = tf.reshape(feed_V0, [-1, self.img_feature_size, self.rnn_size])
+        
+#         real_size = tf.to_int32(tf.shape(V0)[0])
+        # (bs, 22, 512)
+        # (bs, 22)
         label_batch = tf.placeholder('float32', [None, self.ans_vocab_size], name='label_batch')
-        real_size = tf.to_int32(tf.shape(V0)[0])
-        # (32, 22, 512)
-        # (32, 22)
         Q0, sentence_batch = self.que_processor.train()
    
         with tf.variable_scope("attention"):
-            v, q, V, Q, C_update = self.attention(V0, Q0)
+            v, q, V, Q, C_update= self.attention(feed_V0, Q0)
             C_old = None
             for i in range(self.attention_round):
                 #self.attention_round=0 to get the model in paper
-                # print(tf.all_variables())
-                tf.get_variable_scope().reuse_variables()#NOT SURE?
                 C_old = self.memory_cell(v, q, C_update=C_update, C_old=C_old)
-                v, q, V, Q, C_update = self.attention(V0, Q0, C=C_old)
-                
+                v, q, V, Q, C_update= self.attention(V, Q, C=C_old)
         
+        #following is regular process to get prediction        
         score = tf.tanh(tf.matmul(v, self.score_W_uv) + tf.matmul(q, self.score_W_uq) + self.score_b_h)
         logits = tf.nn.xw_plus_b(score, self.score_W, self.score_b)
         logits = layers.batch_norm(logits)
@@ -114,14 +136,15 @@ class Answer_Generator():
         correct_predict = tf.equal(tf.argmax(ans_probability, 1), tf.argmax(label_batch, 1))
         accuracy = tf.reduce_mean(tf.cast(correct_predict, tf.float32))
         loss = tf.reduce_sum(cross_entropy, name='loss')
+
         return loss, accuracy, predict, V0, sentence_batch, label_batch
+        # return loss, accuracy, predict, V0, sentence_batch, label_batch, feed_V0
 
     def memory_cell(self, v, q, C_update=None, C_old=None):
-        #rewrittened
-        #clean
+        #USE TO UPDATE THE AFFINITY MAP
+        #Accept v,q
         if C_old==None:
             return C_update
-        
         W_uv = tf.Variable(tf.random_uniform([self.rnn_size,1], -self.init_bound, \
                                              self.init_bound, name='W_uv'))
         W_uq = tf.Variable(tf.random_uniform([self.rnn_size,1], -self.init_bound, \
@@ -129,13 +152,14 @@ class Answer_Generator():
         b_u = tf.Variable(tf.random_uniform([1], -self.init_bound, \
                                             self.init_bound), name='b_u')
         #(bs,1)
+        #the forget gate u = sigmind(W_uv*v+W_uq*q+b_u). to determine how mush to update in the affinity map
         u = tf.sigmoid(tf.reduce_sum(tf.matmul(v, W_uv) + tf.matmul(q, W_uq) + b_u))
         C = tf.scalar_mul(1 - u, C_old) + tf.scalar_mul(u, C_update)
         return C
     
     def attention(self, V, Q , C=None):
-        #rewritten with N = tf.einsum('ijk,lk->ijl',M1,M2) 
-        # accept and update C
+        # AN IMPLEMENTATION OF: Hierarchical Question-Image Co-Attention(Parallel)
+        #tf.einsum('ijk,lk->ijl',M1,M2): JUST a way to represent matirx multiplication with more flexible shapes. 
         #C is the affinity map
         W_c = tf.Variable(tf.random_uniform([self.rnn_size, self.rnn_size], -self.init_bound, \
                                             self.init_bound, name='W_c'))
@@ -148,44 +172,63 @@ class Answer_Generator():
             # C = tf.batch_matmul(tf.einsum('ijk,lk->ijl',V,W_c), Q, adj_y=True)
             # C = tf.reduce_sum(C,0)
             C = tf.einsum('aik,ajk->ij', tf.einsum('ijk,lk->ijl',V,W_c), Q)
-            
+        
+        #FOLLOWING: implementation of (4) and (5) in the paper.    
         #(k,d)
+        #W_v in paper
         W_hv = tf.Variable(tf.random_uniform([self.attention_hidden_dim, self.rnn_size], \
                                              -self.init_bound,self.init_bound), name='W_hv')
         #(N,k)
+        #Bias for H_v in paper
         b_hv = tf.Variable(tf.random_uniform([self.img_feature_size, self.attention_hidden_dim], -self.init_bound, \
                                              self.init_bound), name='b_hv')
         #(d,k)
+        #W_q in paper
         W_hq = tf.Variable(tf.random_uniform([self.attention_hidden_dim, self.rnn_size], -self.init_bound, \
                                              self.init_bound), name='W_hq')
         #(T,k)
+        #Bias for H_q in paper
         b_hq = tf.Variable(tf.random_uniform([self.max_que_length, self.attention_hidden_dim], -self.init_bound, \
                                              self.init_bound), name='b_hq')
 
         #(N, k(attention_hidden_dim))
+        #H_v in paper
         H_v = tf.nn.relu(tf.einsum('aij,kj->ik', V, W_hv) + tf.einsum('ij,ki->jk', tf.einsum('aij,ki->kj', Q, C), W_hq) + b_hv)
+        
         #(T, k(attention_hidden_dim))
+        #H_q in paper
         H_q = tf.nn.relu(tf.einsum('aij,kj->ik', Q, W_hq)+ tf.einsum('ij,ki->jk', tf.einsum('aij,ik->kj', V, C), W_hv)+ b_hq)
-
+        
+        #w_hv in paper
         W_av = tf.Variable(tf.random_uniform([self.attention_hidden_dim,1], -self.init_bound, \
                                              self.init_bound), name='W_av')
+        
+        #w_hq in paper
         W_aq = tf.Variable(tf.random_uniform([self.attention_hidden_dim,1], -self.init_bound, \
                                              self.init_bound), name='W_aq')
         #(N,1)
+        #bias for a_v in paper
         b_av = tf.Variable(tf.random_uniform([self.img_feature_size, 1], -self.init_bound, \
                                              self.init_bound), name='b_av')
         #(T,1)
+        #bias for a_q in paper
         b_aq = tf.Variable(tf.random_uniform([self.max_que_length, 1], -self.init_bound, \
                                              self.init_bound), name='b_aq')
         #(N,1)
-        a_v = tf.sigmoid(tf.matmul(H_v, W_av) + b_av)
+        #a_v in paper
+        a_v = tf.nn.softmax(tf.matmul(H_v, W_av) + b_av)
         #(T,1)
-        a_q = tf.sigmoid(tf.matmul(H_q, W_aq) + b_aq)
+        #a_q in paper
+        a_q = tf.nn.softmax(tf.matmul(H_q, W_aq) + b_aq)
         
+        #v jian in paper
         v = tf.einsum('ijk,j->ik', V, tf.squeeze(a_v))
+        #q jian in paper
         q = tf.einsum('ijk,j->ik', Q, tf.squeeze(a_q))
-
+        
+        #v jian before reduce sum 
         V_new = tf.mul(V, a_v)   #(bs, N, d)
+        #q jian before reduce sum
         Q_new = tf.mul(Q, a_q)  #(bs, T, d)
         #(bs, d)
 
@@ -196,6 +239,6 @@ class Answer_Generator():
         #Update C
         if update:
             C = tf.einsum('aik,ajk->ij', tf.einsum('ijk,lk->ijl',V,W_c), Q)
-            # C = tf.batch_matmul(tf.einsum('ijk,lk->ijl',V,W_c), Q, adj_y=True)
-            # C = tf.reduce_sum(C,0)
+
         return (v, q, V_new, Q_new, C)
+
