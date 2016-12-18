@@ -58,8 +58,6 @@ class Answer_Generator():
             tf.random_uniform([self.rnn_size, self.hidden_dim], -self.init_bound, self.init_bound, \
                               name='score_W_uq'))
         
-        self.build_attention_model()
-        
     def build_attention_model(self):
         self.W_uv = tf.Variable(tf.random_uniform([self.rnn_size,1], -self.init_bound, \
                                              self.init_bound, name='W_uv'))
@@ -100,7 +98,6 @@ class Answer_Generator():
         self.b_aq = tf.Variable(tf.random_uniform([self.max_que_length, 1], -self.init_bound, \
                                              self.init_bound), name='b_aq')   
         
-
 
     def train_model(self):
         # The baseline.(didn't change, not using) 
@@ -151,10 +148,9 @@ class Answer_Generator():
                 v, q, V, Q, C_update= self.attention(V, Q, C=C_old)
         
         #following is regular process to get prediction        
-        score = tf.tanh(tf.matmul(v, self.score_W_uv) + tf.matmul(q, self.score_W_uq) + self.score_b_h)
+        score = tf.matmul(v, self.score_W_uv) + tf.matmul(q, self.score_W_uq) + self.score_b_h
+        logits = tf.tanh(score)
         logits = tf.nn.xw_plus_b(score, self.score_W, self.score_b)
-        #not NAN?
-        # logits = tf.tanh(logits)
         cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits, label_batch, name='entropy')
         
         ans_probability = tf.nn.softmax(logits, name='answer_prob')
@@ -164,7 +160,6 @@ class Answer_Generator():
         loss = tf.reduce_sum(cross_entropy, name='loss')
 
         return loss, accuracy, predict, V0, sentence_batch, label_batch
-        # return loss, accuracy, predict, V0, sentence_batch, label_batch, feed_V0
 
     def memory_cell(self, v, q, C_update=None, C_old=None):
         #USE TO UPDATE THE AFFINITY MAP
@@ -191,6 +186,7 @@ class Answer_Generator():
             # C = tf.batch_matmul(tf.einsum('ijk,lk->ijl',V,W_c), Q, adj_y=True)
             # C = tf.reduce_sum(C,0)
             C = tf.einsum('aik,ajk->ij', tf.einsum('ijk,lk->ijl',V,self.W_c), Q)
+            C = tf.nn.tanh(C)
         
         #FOLLOWING: implementation of (4) and (5) in the paper.    
         #(k,d)
@@ -198,12 +194,13 @@ class Answer_Generator():
 
         #(N, k(attention_hidden_dim))
         #H_v in paper
-        H_v = tf.nn.relu(tf.einsum('aij,kj->ik', V, self.W_hv) + tf.einsum('ij,ki->jk', tf.einsum('aij,ki->kj', Q, C), self.W_hq) + self.b_hv)
+        H_v = tf.nn.tanh(tf.einsum('aij,kj->ik', V, self.W_hv) + tf.einsum('ij,ki->jk', tf.einsum('aij,ki->kj', Q, C), self.W_hq) + self.b_hv)
+        H_v = tf.nn.dropout(H_v, 1 - self.dropout_rate)
         
         #(T, k(attention_hidden_dim))
         #H_q in paper
-        H_q = tf.nn.relu(tf.einsum('aij,kj->ik', Q, self.W_hq)+ tf.einsum('ij,ki->jk', tf.einsum('aij,ik->kj', V, C), self.W_hv)+ self.b_hq)
-        
+        H_q = tf.nn.tanh(tf.einsum('aij,kj->ik', Q, self.W_hq)+ tf.einsum('ij,ki->jk', tf.einsum('aij,ik->kj', V, C), self.W_hv)+ self.b_hq)
+        H_q = tf.nn.dropout(H_q, 1 - self.dropout_rate)
         #(N,1)
         #a_v in paper
         a_v = tf.nn.softmax(tf.matmul(H_v, self.W_av) + self.b_av)
@@ -216,19 +213,15 @@ class Answer_Generator():
         #q jian in paper
         q = tf.einsum('ijk,j->ik', Q, tf.squeeze(a_q))
         
+        #maybe rescale?????? 
         #v jian before reduce sum 
-        V_new = tf.mul(V, a_v)   #(bs, N, d)
+        V_new = tf.mul(V, a_v)*self.img_feature_size   #(bs, N, d)
         #q jian before reduce sum
-        Q_new = tf.mul(Q, a_q)  #(bs, T, d)
-        #(bs, d)
-
-        #maybe rescale?????? then keep attention before sigmoid
-        # V = tf.mul(V, v)#(bs, N, d)
-        # Q = tf.mul(V, q)#(bs, N, d)
-
+        Q_new = tf.mul(Q, a_q)*self.max_que_length  #(bs, T, d)
         #Update C
         if update:
-            C = tf.einsum('aik,ajk->ij', tf.einsum('ijk,lk->ijl',V,W_c), Q)
+            C = tf.einsum('aik,ajk->ij', tf.einsum('ijk,lk->ijl',V,self.W_c), Q)
+            C = tf.nn.tanh(C)
         return (v, q, V_new, Q_new, C)
 
 
