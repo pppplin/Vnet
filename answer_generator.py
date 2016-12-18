@@ -150,7 +150,7 @@ class Answer_Generator():
         #following is regular process to get prediction        
         score = tf.matmul(v, self.score_W_uv) + tf.matmul(q, self.score_W_uq) + self.score_b_h
         logits = tf.tanh(score)
-        logits = tf.nn.xw_plus_b(score, self.score_W, self.score_b)
+        logits = tf.nn.xw_plus_b(logits, self.score_W, self.score_b)
         cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits, label_batch, name='entropy')
         
         ans_probability = tf.nn.softmax(logits, name='answer_prob')
